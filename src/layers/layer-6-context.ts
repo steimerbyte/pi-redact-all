@@ -19,6 +19,9 @@ const SECRET_FIELD_NAMES = [
   "refresh-token",
   "client_secret",
   "client-secret",
+  "secret_access_key",
+  "access_key",
+  "access_key_id",
   "private_key",
   "private-key",
   "privatekey",
@@ -46,7 +49,7 @@ const JSON_SECRET_KEY_PATTERN = new RegExp(
 );
 
 const ENV_SECRET_PATTERN = new RegExp(
-  `(?:^|[^A-Za-z0-9_])(?:${SECRET_FIELD_NAMES.join("|")})\\s*=\\s*["']?([^"'\\s]{8,})["']?`,
+  `(?:^|[^A-Za-z0-9])(?:${SECRET_FIELD_NAMES.join("|")})\\s*=\\s*["']?([^"'\\s]{8,})["']?`,
   "gi"
 );
 
