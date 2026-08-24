@@ -5,6 +5,53 @@ All notable changes to `pi-redact-all` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8] - 2026-08-24
+
+### Fixed (HIGH — Layer 6 ENV-style secret detection gap)
+
+Layer 6's `ENV_SECRET_PATTERN` used `(?:^|[^A-Za-z0-9_])` as the prefix
+anchor. The character class excludes `_`, which is a **WORD** char in regex
+semantics. As a result, any ENV-style variable whose name has underscores
+*before* the `SECRET_FIELD_NAMES` suffix was silently miss-detected.
+
+Affected real-world patterns (all previously leaked to the LLM):
+
+| Variable | Status before | Status after |
+|----------|---------------|--------------|
+| `IONOS_API_KEY=<key>` | leaked | redacted |
+| `GITHUB_TOKEN=<key>` | leaked | redacted |
+| `CLOUDFLARE_API_KEY=<key>` | leaked | redacted |
+| `MY_API_TOKEN=<key>` | leaked | redacted |
+| `AWS_ACCESS_KEY_ID=<key>` | leaked | redacted |
+
+Root cause: `(?:^|[^A-Za-z0-9_])` had **two** failure modes:
+1. Within `IONOS_API_KEY=...`, the `_` at position 5 is a WORD char, so
+   `[^A-Za-z0-9_]` cannot match it, breaking the lookbehind anchor.
+2. Layer 4 entropy caught some naked keys as a **fallback**, but the
+   `KAFKA_API_TOKEN=xyz` case (26-char value below `minLength=32`) was
+   the worst — neither layer caught it, leaking the secret.
+
+Fix: replace `(?:^|[^A-Za-z0-9_])` with `\b|(?<=[A-Z0-9_])`. The new
+anchor means: word-boundary **OR** lookbehind for a preceding word-char
+that is part of an ENV-Var run (uppercase letters, digits, `_`).
+
+INI / YAML patterns were refactored to use the same anchoring strategy on
+the line-start side (`^[ \\t]*` followed by field-name) to remain
+consistent. Note: pre-existing short-value YAML/INI detection gap
+(values < `minLength` of 32 are dropped by the hot-path fast-exit) is
+out of scope for v0.1.8 and tracked separately.
+
+### Added
+
+- `test/anchor-fix-v0.1.8.test.mjs` — 10-test regression suite covering
+  the 5 leak cases above + 2 backward-compat checks + 3 negative cases.
+
+### Compatibility
+
+- All 109 pre-existing tests still pass (109 → 119 with the new file).
+- Performance: no measurable change — the new anchor is a zero-width
+  lookbehind, same regex complexity as before.
+
 ## [0.1.7] - 2026-07-30
 
 ### Fixed (CRITICAL — image base64 corruption in Anthropic format)

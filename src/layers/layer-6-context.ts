@@ -45,18 +45,29 @@ const JSON_SECRET_KEY_PATTERN = new RegExp(
   "gi"
 );
 
+// Anchor-Semantik:
+// \b (= Übergang word<->non-word) ODER Lookbehind auf UPPER/_ (= Suffix einer
+// Word-Run wie "IONOS_API_KEY"). Der alte Anchor `(?:^|[^A-Za-z0-9_])` hat `_`
+// ausgeschlossen — ein Word-Char — und so ENV-Namen wie `IONOS_API_KEY`,
+// `GITHUB_TOKEN`, `CLOUDFLARE_API_KEY` etc. nicht erkannt.
+// Fix: erlaube \b oder ein Lookbehind auf `[A-Z0-9_]` (Prefix-Teil der ENV-Run).
+const _WORD_RUN_ANCHOR = String.raw`(?:\b|(?<=[A-Z0-9_]))`;
+
 const ENV_SECRET_PATTERN = new RegExp(
-  `(?:^|[^A-Za-z0-9_])(?:${SECRET_FIELD_NAMES.join("|")})\\s*=\\s*["']?([^"'\\s]{8,})["']?`,
+  `${_WORD_RUN_ANCHOR}(?:${SECRET_FIELD_NAMES.join("|")})\\s*=\\s*["']?([^"'\\s]{8,})["']?`,
   "gi"
 );
 
+// INI/YAML: am Zeilenanfang wird `^` durch (?:^|$) ersetzt, damit auch Whitespace
+// vor dem Feldnamen akzeptiert wird. Anchor davor muss via Lookbehind ebenfalls
+// Word-Run-Prefix erlauben.
 const INI_SECRET_PATTERN = new RegExp(
-  `^\\s*(?:${SECRET_FIELD_NAMES.join("|")})\\s*[=:]\\s*(.+)$`,
+  `^[ \\t]*(?:${SECRET_FIELD_NAMES.join("|")})[ \\t]*[=:][ \\t]*(.+)$`,
   "gim"
 );
 
 const YAML_SECRET_PATTERN = new RegExp(
-  `^\\s*(?:${SECRET_FIELD_NAMES.join("|")}):\\s*(.+)$`,
+  `^[ \\t]*(?:${SECRET_FIELD_NAMES.join("|")}):[ \\t](.+)$`,
   "gim"
 );
 
