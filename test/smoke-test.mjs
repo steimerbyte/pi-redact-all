@@ -1,7 +1,5 @@
 // Quick smoke test for pi-redact-all — direct module test (no plugin hooks)
 // NOTE: All test inputs use clearly-fake PLACEHOLDER values, never real-looking secrets.
-// Real secret detection works against actual patterns, but we use safe placeholders in tests
-// to avoid GitHub secret-scanning false positives.
 import { redactText } from "../dist/layers/index.js";
 import { DEFAULT_CONFIG } from "../dist/config.js";
 
@@ -10,12 +8,31 @@ const ctx = {
   partialPrivateKeyPaths: new Set(),
 };
 
-// Helper to build a fake token with a clear prefix
 const FAKE_GH = "ghp_FAKE-TOKEN-FOR-TESTING-ONLY-NOT-REAL-aaaaaaaaaaaa";
 const FAKE_AWS = "AKIAIOSFODNN7PLACEHOLDER";
 const FAKE_STRIPE = "sk_test_FAKE-STRIPE-TEST-KEY-PLACEHOLDER-1234567890";
 
+// Synthetic Telegram tokens — generated dynamically to avoid literal secrets in source
+const TG_1 = "123456789:" + "A".repeat(35);
+const TG_2 = "9876543210:" + "B".repeat(35);
+const TG_FAKE_MIXED = "123456789:ABCdefGhijKlmNoPqrStuVwxYz123456789";
+
 const tests = [
+  {
+    name: "Telegram Bot Token (standalone)",
+    input: TG_1,
+    expect: /\[REDACTED:Telegram Bot Token\]/,
+  },
+  {
+    name: "Telegram Bot Token (env var)",
+    input: `TELEGRAM_BOT_TOKEN=${TG_FAKE_MIXED}`,
+    expect: /\[REDACTED:/,
+  },
+  {
+    name: "Telegram Bot Token (in sentence)",
+    input: `My bot token is ${TG_2} please hide`,
+    expect: /\[REDACTED:Telegram Bot Token\]/,
+  },
   {
     name: "GitHub Token",
     input: `export GITHUB_TOKEN=${FAKE_GH}`,
@@ -43,18 +60,18 @@ aWRnaXRzIFB0eSBMdGQwHhcNMTcwODA0MTI1MjU3WhcNMjcwODAyMTI1MjU3WjBF
   {
     name: "SSH Private Key",
     input: `-----BEGIN OPENSSH PRIVATE KEY-----
-b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gt
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAlwAAAAdzc2gtZW
 -----END OPENSSH PRIVATE KEY-----`,
     expect: /\[REDACTED:PEM OPENSSH PRIVATE KEY\]/,
   },
   {
     name: "Connection String",
-    input: `postgres://admin:secretpass123@localhost:5432/db`,
+    input: `postgres://admin:s3cr3tPass123@localhost:5432/db`,
     expect: /\[REDACTED:Password\]/,
   },
   {
     name: "JSON secret field",
-    input: `{"api_key": "${FAKE_STRIPE}"}`,
+    input: `{"api_key": "superSecretValue12345"}`,
     expect: /\[REDACTED/,
   },
   {
