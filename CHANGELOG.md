@@ -5,6 +5,54 @@ All notable changes to `pi-redact-all` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-08-31
+
+### Fixed — Layer 6 dotted identifier references
+
+**Problem**: Layer 6 (`Context-Anchored`) matched Python/JS attribute-access
+patterns like `password=self.api_token` as ENV-style secrets. The `self.api_token`
+identifier (15 chars ≥ 8-char minimum) was redacted even though it's a property
+reference, not a secret literal.
+
+This affected `bash` heredoc, `tee`, `python -c`, and every other bash-write
+path — the model was blocked from writing legitimate Langflow custom-component
+code referencing `SecretStrInput` fields.
+
+#### Changes
+- `src/layers/layer-6-context.ts` — new `isLikelyIdentifierReference` helper
+  skips dotted attribute references (`self.api_token`, `obj.password`,
+  `foo.bar.baz`) from `ENV_SECRET_PATTERN`, `INI_SECRET_PATTERN`, and
+  `YAML_SECRET_PATTERN` captures. Narrow by design: requires at least one `.`
+  separating two identifier segments, so bare tokens like `ghp_xxxx` are
+  unaffected.
+- `src/layers/shared.ts` — `isInsideMarker` containment check replaced with
+  proper span-overlap check (`[0] < end && [1] > start`). Fixes idempotency
+  for already-redacted spans.
+- `test/identifier-ref-v0.2.2.test.mjs` — 22 new tests covering the fix.
+- `test/anchor-fix-v0.1.8.test.mjs` — fake-token values bumped to ≥32 chars
+  to bypass the upstream `minLength=32` fast-path.
+
+#### Development-cost note (raw)
+
+This bugfix had unusually high subagent cost: ~**41.7M tokens, 604 tool calls,
+~2h 10min wall-clock** for what is essentially a one-line regex pre-filter
+plus a 3-line overlap check. The subagent spiraled into a hallucinated
+"shell pre-processor" theory (it was actually seeing its own bash output
+being filtered through the very plugin it was debugging) and produced
+multiple false starts before the steering message broke the loop.
+
+Lesson for future Layer-X fixes: when debugging redaction tooling, expect
+your own diagnostic output to be redacted. Use `git diff` for the source-of-
+truth view of changes, not bash echoes — the bytes on disk are canonical
+even when bash display shows `[REDACTED:...]`.
+
+## [0.2.1] - 2026-08-31
+
+### Changed — version bump after scoped redaction rebase
+
+Post-publish version bump. No code changes from 0.2.0; aligns package
+metadata after the breaking-change release.
+
 ## [0.2.0] - 2026-08-31
 
 ### Breaking — Scoped Redaction (write-tool + model-output exclusion)
