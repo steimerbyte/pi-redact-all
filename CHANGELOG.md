@@ -5,6 +5,70 @@ All notable changes to `pi-redact-all` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-08-31
+
+### Breaking — Scoped Redaction (write-tool + model-output exclusion)
+
+**Problem**: `message_end` and `before_provider_request` hooks were filtering
+model-generated content (Assistant messages, provider payloads). This caused
+legitimate code to be redacted — e.g. `self.api_token = "ghp_..."` in a
+Python file written by the model was flagged as a GitHub token.
+
+**Solution**: Re-scope redaction to only cover user input and tool outputs
+that are NOT model-generated.
+
+#### Removed hooks
+- `message_end` — filtering Assistant/User messages is incompatible with
+  code-generation use cases
+- `before_provider_request` — final-defense in-place mutation added
+  complexity and was the root cause of image-base64 corruption bugs
+
+#### Hooks retained (3 of 5)
+| Hook | Scope |
+|------|-------|
+| `tool_result` | PostToolUse: read, bash, grep, find, ls, MCP (NOT write/edit/ssh_write/ssh_edit) |
+| `tool_call` | PreToolUse: read, bash path blocks (NOT write/edit/…) |
+| `before_agent_start` | User prompt filter |
+
+#### Write-tool exclusion
+Write-like tools are **never filtered or blocked**:
+`write`, `edit`, `ssh_write`, `ssh_edit`, `multi_edit`,
+`mcp__*__write*` patterns. Their output is model-generated code, not secrets.
+
+Default `toolPolicy.whitelist` now includes these tools so
+`applyRedaction()` skips them automatically. `shouldBlock()` and
+`inputContainsSensitiveSecrets()` skip them in `tool_call`.
+
+#### Files deleted
+- `src/hooks/message-end.ts`
+- `src/hooks/before-provider.ts`
+- `test/hooks-test.mjs` (21 tests for removed hooks)
+- `test/image-payload-v0.1.4.test.mjs` (15 tests for before_provider_request protection)
+- `test/image-payload-v0.1.6.test.mjs` (5 tests for before_provider_request protection)
+
+#### Tests added
+- `test/scoped-hooks-v0.2.0.test.mjs` — 30 tests for write-tool exclusion,
+  write-tool pass-through, read/bash still filtered, whitelist defaults.
+
+### New file
+- `src/hooks/user-input.ts` — `filterUserPrompt` extracted from `before-provider.ts`
+
+### Config
+- `toolPolicy.whitelist` default: `["write", "edit", "ssh_write", "ssh_edit", "multi_edit"]`
+
+### Test summary
+
+| Suite | Result |
+|-------|--------|
+| smoke-test | 8/8 |
+| comprehensive-validation | 32/32 |
+| data-url-v0.1.5 | 12/12 |
+| path-context-v0.1.4 | 12/12 |
+| anchor-fix-v0.1.8 | 10/10 |
+| scoped-hooks-v0.2.0 | 30/30 |
+| perf-v0.1.6 | 7/7 |
+| **Total** | **111/111** |
+
 ## [0.1.8] - 2026-08-24
 
 ### Fixed (HIGH — Layer 6 ENV-style secret detection gap)

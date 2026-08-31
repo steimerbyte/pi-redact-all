@@ -19,9 +19,9 @@ Global tool-output redaction for Pi that catches **secrets, certificates (X.509)
 | SSH Private Keys | ✅ Yes | ✅ Yes (+ multi-chunk continuation) |
 | API Keys | ✅ Yes | ✅ Yes (more patterns) |
 | User-Input Filter | ❌ No | ✅ `before_agent_start` hook |
-| Final Provider-Payload Defense | ❌ No | ✅ `before_provider_request` (in-place) |
+| Write-Tool-Aussparung | ❌ No | ✅ Write-tool output never filtered or blocked |
 | Performance | OK | **79x faster (v0.1.5) → ~5x more (v0.1.6)** on large outputs |
-| Test Coverage | Smoke only | **104 comprehensive + perf tests** |
+| Test Coverage | Smoke only | **111 comprehensive + perf tests** |
 
 ---
 
@@ -51,15 +51,15 @@ L7 (Path) → L1 (Vendor) → L3 (Prefix) → L2 (PEM, with continuation trackin
 
 Path detection runs first so sensitive paths (`.env`, `id_rsa`, etc.) protect the whole file. Entropy runs last (most expensive, least specific).
 
-### 5 Hooks (all schema-aware)
+### 3 Hooks (all schema-aware)
 
-| Hook | Phase | Schema | Return |
-|------|-------|--------|--------|
-| `tool_result` | PostToolUse | All 8 `ToolResultEvent` variants (bash, read, edit, write, grep, find, ls, custom/MCP) | Partial `{content?, details?, isError?, usage?}` |
-| `tool_call` | PreToolUse | All `ToolCallEvent` variants | `{block?, reason?}` or `undefined` |
-| `before_agent_start` | User-Input | `BeforeAgentStartEvent` | `{prompt?}` |
-| `message_end` | After Message | All `AgentMessage` roles (user, assistant, custom, bashExecution, branchSummary, compactionSummary, toolResult) | `{message?}` — preserves original shape exactly |
-| `before_provider_request` | Pre-HTTP | Opaque provider payload | **In-place mutation, returns void** |
+| Hook | Phase | Scope | Return |
+|------|-------|-------|--------|
+| `tool_result` | PostToolUse | Read/Bash/MCP tool output | Partial `{content?}` |
+| `tool_call` | PreToolUse | Blocking for read/bash | `{block?, reason?}` or `undefined` |
+| `before_agent_start` | User-Input | User prompt | `{prompt?}` |
+
+> ⚠️ **Write-tool exclusion**: `write`, `edit`, `ssh_write`, `ssh_edit`, `multi_edit` and `mcp__*__write*` tools are **never filtered or blocked** — their output is model-generated code, not secrets to protect.
 
 ### Visual Identity
 
@@ -203,11 +203,10 @@ Kompatibel mit `@spences10/pi-redact` — beide nutzen `[REDACTED:...]`-Prefix, 
 ```bash
 npm install
 npm run build                 # Compile TS → dist/
-npm run test                  # All 104 tests (8 smoke + 21 hooks + 34 validation + 10 image-payload + 12 path-context + 12 data-url + 7 perf)
+npm run test                  # All 111 tests (8 smoke + 32 validation + 12 path-context + 12 data-url + 10 anchor-fix + 30 scoped-hooks + 7 perf)
 node test/smoke-test.mjs              # Smoke tests only
-node test/hooks-test.mjs              # Hook schema tests
 node test/comprehensive-validation.mjs # All hook + payload tests
-node test/image-payload-v0.1.4.test.mjs  # Image payload preservation
+node test/scoped-hooks-v0.2.0.test.mjs # Write-tool exclusion tests
 node test/path-context-v0.1.4.test.mjs   # File-path / filename preservation
 node test/data-url-v0.1.5.test.mjs      # Data-URL base64 in text fields
 node test/perf-v0.1.6.test.mjs         # Performance regression upper-bounds
@@ -216,11 +215,11 @@ node test/perf-v0.1.6.test.mjs         # Performance regression upper-bounds
 ### Test Coverage
 
 - **8 smoke tests** — Each detection layer against representative input
-- **21 hook tests** — Schema preservation for all AgentMessage roles + in-place mutation
-- **34 validation tests** — All 8 ToolResultEvent variants, edge cases, performance benchmarks
-- **10 image-payload tests** (v0.1.4) — Anthropic/Pi/OpenAI/Google multimodal payload preservation
+- **32 validation tests** — All ToolResultEvent variants, edge cases, performance benchmarks
 - **12 path-context tests** (v0.1.4) — Filename / path-context preservation
 - **12 data-url tests** (v0.1.5) — Inline `data:image/...;base64,` payloads in text fields
+- **10 anchor-fix tests** (v0.1.8) — ENV-style secret detection regression
+- **30 scoped-hooks tests** (v0.2.0) — Write-tool exclusion, write-tool pass-through, read/bash still filtered
 - **7 perf tests** (v0.1.6) — Performance regression upper bounds per workload
 
 ### Release Process
@@ -242,12 +241,11 @@ GitHub Actions publishes to npm with provenance on `v*` tags.
 
 ```
 src/
-├── index.ts                 # Extension entry: registers 5 hooks
+├── index.ts                 # Extension entry: registers 3 hooks
 ├── hooks/
-│   ├── tool-result.ts       # PostToolUse redaction (all 8 variants)
-│   ├── tool-call.ts         # PreToolUse block (path/command scan)
-│   ├── before-provider.ts   # User-input filter + final provider-payload defense
-│   ├── message-end.ts       # Schema-aware AgentMessage filter
+│   ├── tool-result.ts       # PostToolUse redaction (read/bash/MCP, skips write-tools)
+│   ├── tool-call.ts         # PreToolUse block (read/bash, skips write-tools)
+│   ├── user-input.ts        # before_agent_start filter
 │   └── content-utils.ts     # Content mapping helpers
 ├── layers/
 │   ├── index.ts             # Pipeline orchestrator (9-layer chain)

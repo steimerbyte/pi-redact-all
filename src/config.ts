@@ -10,7 +10,7 @@ export const DEFAULT_CONFIG: Config = {
   blockMode: false,
   streamingRedaction: false,
   toolPolicy: {
-    whitelist: [],
+    whitelist: ["write", "edit", "ssh_write", "ssh_edit", "multi_edit"],
     blacklist: [],
   },
   layers: {

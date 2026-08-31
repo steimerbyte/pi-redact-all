@@ -4,9 +4,7 @@
 
 import { applyRedaction } from "../dist/hooks/tool-result.js";
 import { shouldBlock, inputContainsSensitiveSecrets } from "../dist/hooks/tool-call.js";
-import { filterUserPrompt } from "../dist/hooks/before-provider.js";
-import { filterMessage } from "../dist/hooks/message-end.js";
-import { filterProviderPayload } from "../dist/hooks/before-provider.js";
+import { filterUserPrompt } from "../dist/hooks/user-input.js";
 import { redactText } from "../dist/layers/index.js";
 import { DEFAULT_CONFIG } from "../dist/config.js";
 
@@ -264,37 +262,6 @@ function doesNotThrow(name, fn) {
   };
   const result = applyRedaction(event, ctx);
   assert("Unicode + emoji: secret redacted, emojis preserved", result.content?.[0]?.text?.includes("🔐") && result.content?.[0]?.text?.includes("[REDACTED"));
-}
-
-// Special regex chars
-{
-  const event = {
-    type: "message_end",
-    message: {
-      role: "user",
-      content: "Special $$$ chars ghp_FAKE-TOKEN-FOR-TESTING-ONLY-NOT-REAL-aaaaaaaaaaaa $$.*+?",
-      timestamp: 1,
-    },
-  };
-  const result = filterMessage(event, ctx);
-  assert("special regex chars: don't break replacement", result.message?.content?.includes("[REDACTED"));
-}
-
-// Null/undefined fields
-{
-  const event = {
-    type: "message_end",
-    message: {
-      role: "bashExecution",
-      command: "test",
-      output: null,
-      exitCode: undefined,
-      cancelled: false,
-      truncated: false,
-      timestamp: 1,
-    },
-  };
-  doesNotThrow("null/undefined fields don't crash", () => filterMessage(event, ctx));
 }
 
 // ─────────────────────────────────────────────────────────────

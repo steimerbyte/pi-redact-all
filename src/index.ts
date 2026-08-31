@@ -1,29 +1,30 @@
 // pi-redact-all — Extension entry point
 // Hooks: tool_result (PostToolUse), tool_call (PreToolUse Block),
-//        before_agent_start (User-Input Filter), message_end (Last Line),
-//        before_provider_request (Final Defense)
+//        before_agent_start (User-Input Filter)
 
 import { loadConfig } from "./config.js";
 import { createSessionStats, recordMatches, recordBlock, formatStats } from "./stats.js";
 import { applyRedaction, type ToolResultLike } from "./hooks/tool-result.js";
 import { shouldBlock, inputContainsSensitiveSecrets } from "./hooks/tool-call.js";
-import { filterUserPrompt, filterProviderPayload, type BeforeAgentStartLike, type BeforeProviderRequestLike } from "./hooks/before-provider.js";
-import { filterMessage, type MessageEndLike } from "./hooks/message-end.js";
+import { filterUserPrompt, type BeforeAgentStartLike } from "./hooks/user-input.js";
 import { redactText } from "./layers/index.js";
 import type { RedactionContext } from "./types.js";
 
-/**
- * Minimal Pi Extension API contract that we depend on.
- * The real Pi runtime provides this — we just use the parts we need.
- */
+/** Default write-like tools — model output, never filtered or blocked */
+const WRITE_TOOLS = new Set(["write", "edit", "ssh_write", "ssh_edit", "multi_edit"]);
+
+function isWriteTool(name: string): boolean {
+  if (WRITE_TOOLS.has(name)) return true;
+  // ponytail: simplistic pattern, add more patterns if needed
+  if (name.startsWith("mcp__") && /__write/i.test(name)) return true;
+  return false;
+}
+
 interface ExtensionAPI {
   on(event: string, handler: (...args: unknown[]) => unknown): void;
   registerCommand(name: string, config: { description: string; handler: (args: string, ctx: unknown) => Promise<string> | string }): void;
 }
 
-/**
- * Default export — Pi calls this with the ExtensionAPI.
- */
 export default function (pi: ExtensionAPI) {
   const config = loadConfig();
   const stats = createSessionStats();
@@ -42,6 +43,8 @@ export default function (pi: ExtensionAPI) {
   // ──────────────────────────────────────────────────────────────
   pi.on("tool_result", async (event: unknown) => {
     const e = event as ToolResultLike;
+    if (isWriteTool(e.toolName)) return undefined; // write-tool output = model output, never filter
+
     const ctx = makeContext(e.toolName, e.input);
     const result = applyRedaction(e, ctx);
 
@@ -58,7 +61,7 @@ export default function (pi: ExtensionAPI) {
       }
     }
 
-    // Stats: count via length delta as approximation
+    // Stats
     if (result.content) {
       let totalMatches = 0;
       for (let i = 0; i < e.content.length; i++) {
@@ -86,6 +89,8 @@ export default function (pi: ExtensionAPI) {
   // ──────────────────────────────────────────────────────────────
   pi.on("tool_call", async (event: unknown) => {
     const e = event as ToolResultLike;
+    if (isWriteTool(e.toolName)) return undefined; // write-tool input = model output, never block
+
     const blockResult = shouldBlock({ toolName: e.toolName, input: e.input }, config);
     if (blockResult) {
       recordBlock(stats);
@@ -117,39 +122,6 @@ export default function (pi: ExtensionAPI) {
       }
     }
     return result;
-  });
-
-  // ──────────────────────────────────────────────────────────────
-  // ASSISTANT-MESSAGE HOOK: Schema-aware filter (preserves AgentMessage union)
-  // v0.1.2 fix: Now correctly handles custom/bashExecution/branchSummary/
-  // compactionSummary by passing them through untouched, and only mutates
-  // text content within user/assistant/custom roles.
-  // ──────────────────────────────────────────────────────────────
-  pi.on("message_end", async (event: unknown) => {
-    const e = event as MessageEndLike;
-    const ctx = makeContext(e.message.role);
-    const result = filterMessage(e, ctx);
-    if (result.message) {
-      recordMatches(
-        stats,
-        Array(1).fill({ start: 0, end: 0, type: "assistant-message", replacement: "" }),
-        `message:${e.message.role}`
-      );
-    }
-    return result;
-  });
-
-  // ──────────────────────────────────────────────────────────────
-  // PROVIDER-PAYLOAD HOOK: In-place mutation (no return value)
-  // v0.1.2 fix: Mutates payload in place rather than returning a new object,
-  // since providers strictly validate the payload schema.
-  // ──────────────────────────────────────────────────────────────
-  pi.on("before_provider_request", async (event: unknown) => {
-    const e = event as BeforeProviderRequestLike;
-    const ctx = makeContext("provider_payload");
-    filterProviderPayload(e, ctx);
-    // Return undefined — relies on in-place mutation
-    return undefined;
   });
 
   // ──────────────────────────────────────────────────────────────
