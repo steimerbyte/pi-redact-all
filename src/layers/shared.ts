@@ -152,12 +152,13 @@ export function isInsideMarker(cache: MarkerCache, start: number, end: number): 
       hi = mid;
     }
   }
-  // Check if span at lo contains [start, end)
-  if (lo < spans.length && spans[lo][0] <= start && spans[lo][1] >= end) {
+  // Check if any span overlaps with [start, end)
+  // Overlap: span[0] < end && span[1] > start
+  if (lo < spans.length && spans[lo][0] < end && spans[lo][1] > start) {
     return true;
   }
   // Also check the span right before, in case start is just past it
-  if (lo > 0 && spans[lo - 1][0] <= start && spans[lo - 1][1] >= end) {
+  if (lo > 0 && spans[lo - 1][0] < end && spans[lo - 1][1] > start) {
     return true;
   }
   return false;
