@@ -6,6 +6,8 @@ import { isTextItem } from "./content-utils.js";
  * Returns the patched content array (or undefined if no changes).
  */
 export function applyRedaction(event, ctx) {
+    if (ctx.enabled === false)
+        return {};
     if (ctx.config.mode === "off")
         return {};
     // Skip whitelisted tools

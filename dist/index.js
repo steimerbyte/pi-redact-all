@@ -1,24 +1,32 @@
 // pi-redact-all — Extension entry point
 // Hooks: tool_result (PostToolUse), tool_call (PreToolUse Block),
-//        before_agent_start (User-Input Filter), message_end (Last Line),
-//        before_provider_request (Final Defense)
+//        before_agent_start (User-Input Filter)
 import { loadConfig } from "./config.js";
 import { createSessionStats, recordMatches, recordBlock, formatStats } from "./stats.js";
 import { applyRedaction } from "./hooks/tool-result.js";
 import { shouldBlock, inputContainsSensitiveSecrets } from "./hooks/tool-call.js";
-import { filterUserPrompt, filterProviderPayload } from "./hooks/before-provider.js";
-import { filterMessage } from "./hooks/message-end.js";
+import { filterUserPrompt } from "./hooks/user-input.js";
 import { redactText } from "./layers/index.js";
-/**
- * Default export — Pi calls this with the ExtensionAPI.
- */
+/** Default write-like tools — model output, never filtered or blocked */
+const WRITE_TOOLS = new Set(["write", "edit", "ssh_write", "ssh_edit", "multi_edit"]);
+function isWriteTool(name) {
+    if (WRITE_TOOLS.has(name))
+        return true;
+    // ponytail: simplistic pattern, add more patterns if needed
+    if (name.startsWith("mcp__") && /__write/i.test(name))
+        return true;
+    return false;
+}
 export default function (pi) {
     const config = loadConfig();
     const stats = createSessionStats();
     const partialPrivateKeyPaths = new Set();
+    // Session-level enable toggle (slash commands: redact on | redact off | redact status)
+    let enabled = true;
     const makeContext = (toolName, input) => ({
         config,
         partialPrivateKeyPaths,
+        enabled,
         toolName,
         inputPath: input ? input.path : undefined,
         command: input ? input.command : undefined,
@@ -28,6 +36,8 @@ export default function (pi) {
     // ──────────────────────────────────────────────────────────────
     pi.on("tool_result", async (event) => {
         const e = event;
+        if (isWriteTool(e.toolName))
+            return undefined; // write-tool output = model output, never filter
         const ctx = makeContext(e.toolName, e.input);
         const result = applyRedaction(e, ctx);
         // Track partial private key paths
@@ -43,7 +53,7 @@ export default function (pi) {
                 }
             }
         }
-        // Stats: count via length delta as approximation
+        // Stats
         if (result.content) {
             let totalMatches = 0;
             for (let i = 0; i < e.content.length; i++) {
@@ -61,16 +71,16 @@ export default function (pi) {
         return result;
     });
     // ──────────────────────────────────────────────────────────────
-    // PRE-TOOL HOOK: Block sensitive tool calls
-    // ──────────────────────────────────────────────────────────────
     pi.on("tool_call", async (event) => {
         const e = event;
-        const blockResult = shouldBlock({ toolName: e.toolName, input: e.input }, config);
+        if (isWriteTool(e.toolName))
+            return undefined; // write-tool input = model output, never block
+        const blockResult = shouldBlock({ toolName: e.toolName, input: e.input }, config, enabled);
         if (blockResult) {
             recordBlock(stats);
             return blockResult;
         }
-        const inputBlock = inputContainsSensitiveSecrets({ toolName: e.toolName, input: e.input }, config);
+        const inputBlock = inputContainsSensitiveSecrets({ toolName: e.toolName, input: e.input }, config, enabled);
         if (inputBlock) {
             recordBlock(stats);
             return inputBlock;
@@ -92,42 +102,63 @@ export default function (pi) {
         }
         return result;
     });
-    // ──────────────────────────────────────────────────────────────
-    // ASSISTANT-MESSAGE HOOK: Schema-aware filter (preserves AgentMessage union)
-    // v0.1.2 fix: Now correctly handles custom/bashExecution/branchSummary/
-    // compactionSummary by passing them through untouched, and only mutates
-    // text content within user/assistant/custom roles.
-    // ──────────────────────────────────────────────────────────────
-    pi.on("message_end", async (event) => {
-        const e = event;
-        const ctx = makeContext(e.message.role);
-        const result = filterMessage(e, ctx);
-        if (result.message) {
-            recordMatches(stats, Array(1).fill({ start: 0, end: 0, type: "assistant-message", replacement: "" }), `message:${e.message.role}`);
-        }
-        return result;
+    // Session toggle command — registered as a single top-level `/redact` so it
+    // appears in the slash-menu autocomplete, with argument completions for
+    // on | off | status.
+    const setEnabled = (next) => {
+        const changed = enabled !== next;
+        enabled = next;
+        partialPrivateKeyPaths.clear();
+        return changed;
+    };
+    const REDACT_SUBS = [
+        { value: "on", label: "on", description: "Enable redaction in this session" },
+        { value: "off", label: "off", description: "Disable redaction in this session" },
+        { value: "status", label: "status", description: "Show whether redaction is enabled" },
+        { value: "stats", label: "stats", description: "Show session statistics" },
+        { value: "config", label: "config", description: "Show current configuration" },
+    ];
+    pi.registerCommand("redact", {
+        description: "Toggle pi-redact-all redaction (on|off|status|stats|config)",
+        getArgumentCompletions: (prefix) => {
+            const p = prefix.trim().toLowerCase();
+            const matches = REDACT_SUBS.filter((s) => s.value.startsWith(p));
+            return matches.length > 0 ? matches : null;
+        },
+        handler: (args) => {
+            const sub = (args ?? "").trim().toLowerCase().split(/\s+/)[0] ?? "";
+            switch (sub) {
+                case "on": {
+                    const changed = setEnabled(true);
+                    return changed
+                        ? "pi-redact-all: redaction ENABLED. Tool output, user input and sensitive tool calls will be filtered/blocked."
+                        : "pi-redact-all: redaction already enabled.";
+                }
+                case "off": {
+                    const changed = setEnabled(false);
+                    return changed
+                        ? "pi-redact-all: redaction DISABLED. Tool output, user input and sensitive tool calls pass through unmodified. Use `/redact on` to re-enable."
+                        : "pi-redact-all: redaction already disabled.";
+                }
+                case "status":
+                    return `pi-redact-all: redaction is ${enabled ? "ENABLED" : "DISABLED"}.`;
+                case "stats":
+                    return formatStats(stats);
+                case "config":
+                    return JSON.stringify(config, null, 2);
+                default:
+                    return `pi-redact-all: unknown argument '${sub}'. Usage: /redact <on|off|status|stats|config>`;
+            }
+        },
     });
-    // ──────────────────────────────────────────────────────────────
-    // PROVIDER-PAYLOAD HOOK: In-place mutation (no return value)
-    // v0.1.2 fix: Mutates payload in place rather than returning a new object,
-    // since providers strictly validate the payload schema.
-    // ──────────────────────────────────────────────────────────────
-    pi.on("before_provider_request", async (event) => {
-        const e = event;
-        const ctx = makeContext("provider_payload");
-        filterProviderPayload(e, ctx);
-        // Return undefined — relies on in-place mutation
-        return undefined;
-    });
-    // ──────────────────────────────────────────────────────────────
-    // COMMANDS
-    // ──────────────────────────────────────────────────────────────
+    // Legacy flat commands (still registered so older sessions / docs keep working,
+    // but the canonical surface is the unified `/redact` above).
     pi.registerCommand("redact-all-stats", {
-        description: "Show pi-redact-all session statistics",
+        description: "Show pi-redact-all session statistics (alias of `/redact stats`)",
         handler: () => formatStats(stats),
     });
     pi.registerCommand("redact-all-config", {
-        description: "Show current pi-redact-all configuration",
+        description: "Show current pi-redact-all configuration (alias of `/redact config`)",
         handler: () => JSON.stringify(config, null, 2),
     });
 }

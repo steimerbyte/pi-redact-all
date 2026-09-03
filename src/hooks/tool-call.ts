@@ -26,11 +26,11 @@ function isWriteTool(name: string): boolean {
  * Check whether a tool call should be blocked.
  * Write-tools are always skipped (model output = never block).
  */
-export function shouldBlock(event: ToolCallLike, config: Config): BlockResult | undefined {
+export function shouldBlock(event: ToolCallLike, config: Config, enabled: boolean = true): BlockResult | undefined {
+  if (!enabled) return undefined;
   if (isWriteTool(event.toolName)) return undefined;
 
   if (!config.blockMode) return undefined;
-
   const input = event.input;
   if (!input) return undefined;
 
@@ -63,10 +63,10 @@ export function shouldBlock(event: ToolCallLike, config: Config): BlockResult | 
  * Check if input contains secrets that should be blocked.
  * Write-tools are always skipped.
  */
-export function inputContainsSensitiveSecrets(event: ToolCallLike, config: Config): BlockResult | undefined {
+export function inputContainsSensitiveSecrets(event: ToolCallLike, config: Config, enabled: boolean = true): BlockResult | undefined {
+  if (!enabled) return undefined;
   if (isWriteTool(event.toolName)) return undefined;
   if (!config.blockMode) return undefined;
-
   const input = event.input;
   if (!input) return undefined;
 

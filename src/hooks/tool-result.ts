@@ -18,6 +18,7 @@ export interface ToolResultLike {
 export function applyRedaction(event: ToolResultLike, ctx: RedactionContext): {
   content?: ContentItem[];
 } {
+  if (ctx.enabled === false) return {};
   if (ctx.config.mode === "off") return {};
 
   // Skip whitelisted tools

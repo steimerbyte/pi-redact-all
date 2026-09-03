@@ -1,11 +1,23 @@
 // tool-call hook — PreToolUse blocking
 import { commandReadsSensitive, shouldBlockPath } from "../layers/layer-7-path.js";
 import { redactText } from "../layers/index.js";
+const WRITE_TOOLS = new Set(["write", "edit", "ssh_write", "ssh_edit", "multi_edit"]);
+function isWriteTool(name) {
+    if (WRITE_TOOLS.has(name))
+        return true;
+    if (name.startsWith("mcp__") && /__write/i.test(name))
+        return true;
+    return false;
+}
 /**
  * Check whether a tool call should be blocked.
- * Returns a BlockResult if blocked, undefined otherwise.
+ * Write-tools are always skipped (model output = never block).
  */
-export function shouldBlock(event, config) {
+export function shouldBlock(event, config, enabled = true) {
+    if (!enabled)
+        return undefined;
+    if (isWriteTool(event.toolName))
+        return undefined;
     if (!config.blockMode)
         return undefined;
     const input = event.input;
@@ -21,8 +33,8 @@ export function shouldBlock(event, config) {
             };
         }
     }
-    // read/write/edit: check path
-    if (["read", "write", "edit"].includes(event.toolName)) {
+    // read: check path
+    if (event.toolName === "read") {
         const path = (input.path ?? input.file_path ?? input.file);
         if (path && shouldBlockPath(path)) {
             return {
@@ -34,16 +46,19 @@ export function shouldBlock(event, config) {
     return undefined;
 }
 /**
- * Check if input contains secrets that should be blocked (e.g., curl with --data
- * containing a token, or git commit -m with embedded credentials).
+ * Check if input contains secrets that should be blocked.
+ * Write-tools are always skipped.
  */
-export function inputContainsSensitiveSecrets(event, config) {
+export function inputContainsSensitiveSecrets(event, config, enabled = true) {
+    if (!enabled)
+        return undefined;
+    if (isWriteTool(event.toolName))
+        return undefined;
     if (!config.blockMode)
         return undefined;
     const input = event.input;
     if (!input)
         return undefined;
-    // Serialize input to scan for secrets
     const serialized = JSON.stringify(input);
     const result = redactText(serialized, {
         config,

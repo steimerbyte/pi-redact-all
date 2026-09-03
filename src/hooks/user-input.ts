@@ -17,6 +17,7 @@ export function filterUserPrompt(
   event: BeforeAgentStartLike,
   ctx: RedactionContext
 ): BeforeAgentStartResult {
+  if (ctx.enabled === false) return {};
   if (ctx.config.mode === "off") return {};
   if (ctx.config.toolPolicy.whitelist.includes("user_input")) return {};
 

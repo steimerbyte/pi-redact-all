@@ -18,6 +18,8 @@ export interface RedactionContext {
   config: Config;
   /** Path-based partial block tracker (for multi-chunk reads of private keys) */
   partialPrivateKeyPaths: Set<string>;
+  /** Session-level enable flag (toggled via slash commands). Defaults to true. */
+  enabled?: boolean;
 }
 
 export interface Config {

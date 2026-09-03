@@ -43,13 +43,45 @@ const JSON_SECRET_KEY_PATTERN = new RegExp(`(?:"(?:${SECRET_FIELD_NAMES.join("|"
 // `GITHUB_TOKEN`, `CLOUDFLARE_API_KEY` etc. nicht erkannt.
 // Fix: erlaube \b oder ein Lookbehind auf `[A-Z0-9_]` (Prefix-Teil der ENV-Run).
 const _WORD_RUN_ANCHOR = String.raw `(?:\b|(?<=[A-Z0-9_]))`;
-const ENV_SECRET_PATTERN = new RegExp(`${_WORD_RUN_ANCHOR}(?:${SECRET_FIELD_NAMES.join("|")})\\s*=\\s*["']?([^"'\\s]{8,})["']?`, "gi");
+// Quote-handling via lookahead: check if a quote follows =, then branch accordingly.
+// This ensures the closing quote is OUTSIDE the captured group (not in the span).
+const ENV_SECRET_PATTERN = new RegExp(`${_WORD_RUN_ANCHOR}(?:${SECRET_FIELD_NAMES.join("|")})\\s*=\\s*["']?([^"'\s]{8,})["']?`, "gi");
 // INI/YAML: am Zeilenanfang wird `^` durch (?:^|$) ersetzt, damit auch Whitespace
 // vor dem Feldnamen akzeptiert wird. Anchor davor muss via Lookbehind ebenfalls
 // Word-Run-Prefix erlauben.
 const INI_SECRET_PATTERN = new RegExp(`^[ \\t]*(?:${SECRET_FIELD_NAMES.join("|")})[ \\t]*[=:][ \\t]*(.+)$`, "gim");
 const YAML_SECRET_PATTERN = new RegExp(`^[ \\t]*(?:${SECRET_FIELD_NAMES.join("|")}):[ \\t](.+)$`, "gim");
 const ANCHOR_RE = new RegExp(ANCHORS.map((a) => a.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "g");
+/**
+ * Returns true if `value` (after stripping surrounding whitespace and quotes)
+ * looks like a Python/JavaScript/Go-style identifier reference:
+ *   - bare:   `api_token`, `password`, `my_var`
+ *   - dotted: `self.api_token`, `obj.password`, `foo.bar.baz`
+ *
+ * These are NOT secrets — they are variable/property names. The 8-char minimum
+ * in ENV_SECRET_PATTERN can accidentally match e.g. `self.api_token` (15 chars)
+ * as a secret. This filter prevents that false positive.
+ *
+ * Rationale for dots-only (no hyphens, underscores only):
+ *   - Real tokens use `-` or `_` mixed (`ghp_xxx`, `sk-xxx`) — hyphenated identifiers
+ *     like `my-token` are valid Python but extremely rare as class attribute chains.
+ *   - The `.`-only rule catches the common `self.<attr>`, `obj.<attr>` patterns
+ *     while keeping the filter fast and predictable.
+ *
+ * ponytail: intentionally narrow. Edge case: a bare identifier ≥8 chars that IS
+ * a real secret (e.g. a UUID-style token with no hyphens like `a1b2c3d4e5f6`)
+ * would be skipped. The 8-char threshold means this only affects tokens between
+ * 8-15 chars without special chars — a narrow window. Layer 4 (entropy) still
+ * catches those.
+ */
+function isLikelyIdentifierReference(value) {
+    // ponytail: single-segment identifiers are tokens — only skip dotted refs.
+    const trimmed = value.replace(/^[\s"']+|[\s"']+$/g, "");
+    // Never skip [REDACTED:...] markers — they are already-redacted spans.
+    if (trimmed.includes("[REDACTED:"))
+        return false;
+    return /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$/.test(trimmed);
+}
 export function apply(text, ctx) {
     const matches = [];
     // PERFORMANCE: marker cache
@@ -96,9 +128,16 @@ function pushAllMatches(text, pattern, matches, type, markerCache, preserveCaptu
     pattern.lastIndex = 0;
     let m;
     while ((m = pattern.exec(text)) !== null) {
-        const captured = m[preserveCapturedGroup];
+        const raw = m[preserveCapturedGroup];
+        if (!raw)
+            continue;
+        // ponytail: trim trailing whitespace (INI/YAML .+ captures line-end spaces)
+        const captured = raw.trimEnd();
         if (!captured)
             continue;
+        if (isLikelyIdentifierReference(captured))
+            continue;
+        // Use trimmed string for identifier check and span; position is identical
         const capturedIdx = m[0].indexOf(captured);
         if (capturedIdx === -1)
             continue;

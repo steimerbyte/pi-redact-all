@@ -9,12 +9,12 @@ export interface BlockResult {
 }
 /**
  * Check whether a tool call should be blocked.
- * Returns a BlockResult if blocked, undefined otherwise.
+ * Write-tools are always skipped (model output = never block).
  */
-export declare function shouldBlock(event: ToolCallLike, config: Config): BlockResult | undefined;
+export declare function shouldBlock(event: ToolCallLike, config: Config, enabled?: boolean): BlockResult | undefined;
 /**
- * Check if input contains secrets that should be blocked (e.g., curl with --data
- * containing a token, or git commit -m with embedded credentials).
+ * Check if input contains secrets that should be blocked.
+ * Write-tools are always skipped.
  */
-export declare function inputContainsSensitiveSecrets(event: ToolCallLike, config: Config): BlockResult | undefined;
+export declare function inputContainsSensitiveSecrets(event: ToolCallLike, config: Config, enabled?: boolean): BlockResult | undefined;
 //# sourceMappingURL=tool-call.d.ts.map
