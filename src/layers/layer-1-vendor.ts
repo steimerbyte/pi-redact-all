@@ -61,7 +61,15 @@ const PATTERNS: Pattern[] = [
   { name: "Brave API Key", prefix: "BSA", tail: /^BSA[A-Z0-9]{20,}\b/, wordBoundary: true },
   // Firecrawl
   { name: "Firecrawl API Key", prefix: "fc-", tail: /^fc-[a-f0-9]{32}\b/, wordBoundary: true },
+  // Telegram Bot Token — 123456789:ABCd********************[REDACTED:High Entropy Token] (bot_id: 5-20 digits + ":" + 35-char token)
+  // No fixed prefix; handled via dedicated regex scan below (cannot use indexOf pre-screen).
 ];
+
+// Telegram Bot Token: \b\d{5,20}:[A-Za-z0-9_-]{35}\b
+// Bot IDs are numeric (typically 7-10 digits, but may grow). After the colon is exactly 35 chars
+// from the URL-safe base64 alphabet. Using 5 as minimum to avoid matching tiny numbers while
+// staying permissive for future ID lengths.
+const TELEGRAM_BOT_TOKEN_RE = /\b\d{5,20}:[A-Za-z0-9_-]{35}\b/g;
 
 /** A small char-class check used instead of `\\b` — much faster than the
  *  regex engine's word-boundary primitive. Word chars are `[A-Za-z0-9_]`. */
@@ -144,6 +152,28 @@ export function apply(text: string, ctx: RedactionContext): LayerResult {
       });
       idx = end;
     }
+  }
+
+  // ── Telegram Bot Token (dedicated scan — no fixed literal prefix, so indexOf pre-screen not viable) ──
+  // Format: <bot_id>:<35-char token>  e.g. 123456789:ABCd********************[REDACTED:High Entropy Token]
+  // NOTE: intentionally NOT checked against allowlist. The default allowlist contains
+  // "\\b[0-9a-f]{7,40}\\b" to suppress git SHAs, but a Telegram bot ID like "123456789"
+  // is numeric hex and would false-positive on that rule, suppressing the whole token.
+  // Telegram tokens are 45+ chars and highly specific, so allowlisting them is undesirable.
+  TELEGRAM_BOT_TOKEN_RE.lastIndex = 0;
+  let tm: RegExpExecArray | null;
+  while ((tm = TELEGRAM_BOT_TOKEN_RE.exec(text)) !== null) {
+    const start = tm.index;
+    const end = start + tm[0].length;
+    if (isInsideMarker(markerCache, start, end)) continue;
+    if (matchesOverlapExisting(matches, start, end)) continue;
+    if (isInsidePathContext(text, start, end)) continue;
+    matches.push({
+      start,
+      end,
+      type: "Telegram Bot Token",
+      replacement: buildMarker(tm[0], "Telegram Bot Token", ctx.config.preservePrefixChars, ctx.config.asterisksMax),
+    });
   }
 
   return { matches };
