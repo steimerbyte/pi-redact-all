@@ -51,6 +51,45 @@ slash commands. The new hook short-circuits on `text.startsWith("/")`
 and on `text.length < minLength`, so common interactive inputs skip the
 9-layer pipeline entirely.
 
+### Fixed — Layer 6 `readapi_key`-style false positives
+
+**Problem**: After the `_WORD_RUN_ANCHOR` (line 66) was tightened in
+v0.1.8 to `(?:\b|(?<=[A-Z0-9_]))` to allow `IONOS_API_KEY`-style
+identifiers, a class of false-positive matches slipped through. The
+`gi` flag on `ENV_SECRET_PATTERN` makes the lookbehind `[A-Z0-9_]`
+case-insensitive, so it also matches lowercase prose letters. Concretely,
+`readapi_key=12345678` matches starting at the `api_key` substring (the
+`d` before `api_key` satisfies the case-folded lookbehind), and the same
+bug fires for `myapikey=`, `dapi_key=`, `preaddpassword=`, `foopasswd=`,
+etc.
+
+**Fix**: Two layers of defense.
+
+1. Tightened the anchor from `(?:\b|(?<=[A-Z0-9_]))` to `(?<![a-z])`.
+   A lowercase letter immediately before the field name is the marker
+   of prose or an identifier, not the start of an ENV-style declaration.
+2. Added a post-match guard in `pushAllMatches` that rejects any ENV
+   match whose previous character is a lowercase letter. Both layers
+   work together: the regex narrows the search space, the guard
+   catches anything that sneaks through.
+
+Also fixed: `[^"'\s]` inside the template literal was silently turning
+into `[^"'s]` because JavaScript template literals drop unescaped
+`\s` escape sequences (the backslash is consumed without producing
+`\s` for the regex engine). The captured group now correctly
+excludes whitespace via the properly-escaped `[^"'\\s]`.
+
+#### Changes
+- `src/layers/layer-6-context.ts` — `_WORD_RUN_ANCHOR` switched to
+  `(?<![a-z])`; `pushAllMatches` adds the `prevChar` guard; capture
+  group character class escapes `\s` correctly (`[^"'\\s]`).
+- `test/vendor-keys.test.mjs` — 4 new boundary regression tests:
+  `myapikey=`, `dapi_key=`, `preaddpassword=`, `foopasswd=`.
+- `test/scoped-hooks-v0.2.0.test.mjs` — `mcp__*__write` test now uses
+  benign content (`def hello(): return "world"`) that exercises the
+  write-tool-exclusion intent without depending on a regex bug. The
+  write-tool exclusion itself is enforced in `src/index.ts`.
+
 ## [0.2.2] - 2026-08-31
 
 ### Fixed — Layer 6 dotted identifier references

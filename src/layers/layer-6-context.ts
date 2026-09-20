@@ -49,17 +49,30 @@ const JSON_SECRET_KEY_PATTERN = new RegExp(
 );
 
 // Anchor-Semantik:
-// \b (= Übergang word<->non-word) ODER Lookbehind auf UPPER/_ (= Suffix einer
-// Word-Run wie "IONOS_API_KEY"). Der alte Anchor `(?:^|[^A-Za-z0-9_])` hat `_`
-// ausgeschlossen — ein Word-Char — und so ENV-Namen wie `IONOS_API_KEY`,
-// `GITHUB_TOKEN`, `CLOUDFLARE_API_KEY` etc. nicht erkannt.
-// Fix: erlaube \b oder ein Lookbehind auf `[A-Z0-9_]` (Prefix-Teil der ENV-Run).
-const _WORD_RUN_ANCHOR = String.raw`(?:\b|(?<=[A-Z0-9_]))`;
+// Reject lowercase letters immediately before the field name. ENV-style secrets
+// (`IONOS_API_KEY`, `DB_PASSWORD`, `AWS_SECRET_ACCESS_KEY`) are uppercase, and
+// the field-name list is lowercase — a lowercase char directly before a field
+// name means we are inside an identifier/prose word, not at the start of an
+// ENV-style key. This catches the `readapi_key=` false-positive (where the
+// `d` before `api_key` proves we are mid-word) without rejecting the legitimate
+// `IONOS_API_KEY=` form (preceded by `_`, which is non-lowercase).
+//
+// Rationale: the previous anchor `(?:\b|(?<=[A-Z0-9_]))` accepted any word char
+// or upper/digit/_ prefix, but combined with the case-insensitive `gi` flag the
+// lookbehind `[A-Z0-9_]` is silently widened to `[A-Za-z0-9_]`, so lowercase
+// prose matches. Switching to `(?<![a-z])` side-steps that case-folding
+// footgun AND tightens the semantics: it explicitly rejects lowercase-prefix
+// false positives.
+const _WORD_RUN_ANCHOR = String.raw`(?<![a-z])`;
 
 // Quote-handling via lookahead: check if a quote follows =, then branch accordingly.
 // This ensures the closing quote is OUTSIDE the captured group (not in the span).
+// Note: \\s in the template literal becomes \s in the regex string, which the
+// regex engine interprets as the whitespace class. Do NOT write `\s` (single
+// backslash) — that drops the backslash in a template literal and turns the
+// character class into `[^"'s]{8,}`, which falsely matches across whitespace.
 const ENV_SECRET_PATTERN = new RegExp(
-  `${_WORD_RUN_ANCHOR}(?:${SECRET_FIELD_NAMES.join("|")})\\s*=\\s*["']?([^"'\s]{8,})["']?`,
+  `${_WORD_RUN_ANCHOR}(?:${SECRET_FIELD_NAMES.join("|")})\\s*=\\s*["']?([^"'\\s]{8,})["']?`,
   "gi"
 );
 
@@ -172,6 +185,15 @@ function pushAllMatches(
     const captured = raw.trimEnd();
     if (!captured) continue;
     if (isLikelyIdentifierReference(captured)) continue;
+    // Layer-6 ENV guard: defense in depth against the `gi`-flag case-folding
+    // footgun on the lookbehind. ENV-style secrets are uppercase SNAKE_CASE;
+    // a lowercase letter immediately before the field name means we are in
+    // prose or an identifier, not at the start of an ENV declaration. Catches
+    // `readapi_key=...` without rejecting `IONOS_API_KEY=...` (preceded by
+    // `_`, which is not lowercase). JSON/INI/YAML patterns never have a
+    // lowercase letter immediately before the field name in valid input.
+    const prevChar = text[m.index - 1];
+    if (prevChar !== undefined && /[a-z]/.test(prevChar)) continue;
     // Use trimmed string for identifier check and span; position is identical
     const capturedIdx = m[0].indexOf(captured);
     if (capturedIdx === -1) continue;

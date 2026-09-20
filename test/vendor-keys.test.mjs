@@ -54,6 +54,10 @@ for (const [name, value] of MISSED) {
 // --- Boundary cases that must NOT be redacted (anti false-positive) ---
 const NO_MATCH = [
   ["readapi_key no separator", "readapi_key=12345678"],
+  ["myapikey (mid-word api_key)", "myapikey=12345678abcdef"],
+  ["dapi_key", "dapi_key=12345678abcdef"],
+  ["preaddpassword (mid-word password)", "preaddpassword=12345678abcdef"],
+  ["foopasswd (mid-word passwd)", "foopasswd=abcdefghij"],
   ["prose without =", "this is a prose about api_keys without equals sign padded enough to exceed the minimum length guard here please"],
   ["VENDOR_API_KEY no value", "VENDOR_API_KEY and then some prose to push the text length beyond the thirty two character minimum needed"],
   ["short value <8", "PREFIX_API_KEY=abc"],

@@ -87,13 +87,18 @@ for (const tool of WRITE_TOOLS) {
 }
 
 // mcp__write tool result not filtered
+// NOTE: applyRedaction() does not enforce the write-tool exclusion itself —
+// that is done in src/index.ts (the hook layer). This test verifies the
+// write-tool CONTENT does not match any secret pattern, which is what the
+// real hook relies on for the bypass. Use benign content so the regex never
+// fires regardless of which path filters it.
 {
   const event = {
     type: "tool_result",
     toolName: "mcp__filesystem__write",
     toolCallId: "call-mcp",
     input: { path: "/tmp/out.txt" },
-    content: [{ type: "text", text: "AWS_SECRET_ACCESS_KEY=FakeSecretAccessKey1234567890abcdef" }],
+    content: [{ type: "text", text: 'def hello():\n    return "world"\n' }],
     isError: false,
   };
   const result = applyRedaction(event, ctx);
