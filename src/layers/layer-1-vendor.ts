@@ -63,6 +63,8 @@ const PATTERNS: Pattern[] = [
   { name: "Firecrawl API Key", prefix: "fc-", tail: /^fc-[a-f0-9]{32}\b/, wordBoundary: true },
   // Telegram Bot Token — 123456789:ABCd********************[REDACTED:High Entropy Token] (bot_id: 5-20 digits + ":" + 35-char token)
   // No fixed prefix; handled via dedicated regex scan below (cannot use indexOf pre-screen).
+  // IONOS API Token — `<32-hex>.<base64url signature>`. No fixed prefix; handled via
+  // dedicated regex scan below.
 ];
 
 // Telegram Bot Token: \b\d{5,20}:[A-Za-z0-9_-]{35}\b
@@ -70,6 +72,20 @@ const PATTERNS: Pattern[] = [
 // from the URL-safe base64 alphabet. Using 5 as minimum to avoid matching tiny numbers while
 // staying permissive for future ID lengths.
 const TELEGRAM_BOT_TOKEN_RE = /\b\d{5,20}:[A-Za-z0-9_-]{35}\b/g;
+
+// IONOS API Token: `<32-hex public id>.<base64url signature>`
+// Format: e.g. `5bf71ccd4cff40179dc99971cdbbb5a4.sSUUvLUW8JEosSOI8wJKqpne3-Y9Oe1277yZfMiDbRKyWBSvpDoxlQAm033PD_25LtzbE94fSF4YDa9iD6TsYQ`
+// Public prefix is 32 lowercase hex chars; signature is the URL-safe base64 alphabet
+// (A-Z, a-z, 0-9, `-`, `_`). Signature length varies between providers (32 chars for
+// single HMAC-SHA256 keys, 88 chars for concatenated HMAC-SHA512 pairs we have seen in
+// the wild). The 32-100 range covers both ends with margin for future schema changes.
+//
+// False-positive risk: any `<hex>.<base64url>` dot-notation. The strict 32-hex
+// prefix + 32+ char signature filter excludes UUIDs (which contain `-` in the
+// middle), version strings (`v1.2.3`), and short content-hash + path fragments.
+// We allow the regex to match anywhere in the text (no fixed prefix to pre-screen),
+// so it runs lazily. Same machinery as Telegram.
+const IONOS_API_TOKEN_RE = /\b[a-f0-9]{32}\.[A-Za-z0-9_-]{32,100}\b/g;
 
 /** A small char-class check used instead of `\\b` — much faster than the
  *  regex engine's word-boundary primitive. Word chars are `[A-Za-z0-9_]`. */
@@ -173,6 +189,24 @@ export function apply(text: string, ctx: RedactionContext): LayerResult {
       end,
       type: "Telegram Bot Token",
       replacement: buildMarker(tm[0], "Telegram Bot Token", ctx.config.preservePrefixChars, ctx.config.asterisksMax),
+    });
+  }
+
+  // ── IONOS API Token (dedicated scan — no fixed literal prefix) ──
+  // Format: `<32-hex>.<base64url signature>`. See comment above IONOS_API_TOKEN_RE.
+  IONOS_API_TOKEN_RE.lastIndex = 0;
+  let im: RegExpExecArray | null;
+  while ((im = IONOS_API_TOKEN_RE.exec(text)) !== null) {
+    const start = im.index;
+    const end = start + im[0].length;
+    if (isInsideMarker(markerCache, start, end)) continue;
+    if (matchesOverlapExisting(matches, start, end)) continue;
+    if (isInsidePathContext(text, start, end)) continue;
+    matches.push({
+      start,
+      end,
+      type: "IONOS API Token",
+      replacement: buildMarker(im[0], "IONOS API Token", ctx.config.preservePrefixChars, ctx.config.asterisksMax),
     });
   }
 

@@ -5,6 +5,43 @@ All notable changes to `pi-redact-all` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.4] - 2026-10-12
+
+### Added — IONOS API Token pattern (layer 1)
+
+Closes a gap reported by a user after v0.2.3: IONOS API tokens of the form
+`<32-lowercase-hex>.<base64url signature>` (e.g.
+`5bf71ccd4cff40179dc99971cdbbb5a4.sSUUvLUW8JEosSOI8wJKqpne3-Y9Oe1277yZfMiDbRKyWBSvpDoxlQAm033PD_25LtzbE94fSF4YDa9iD6TsYQ`)
+were not redacted by any layer — neither vendor (no IONOS entry), nor
+entropy (the dot split the key into two tokens, and the suffix contains
+`-` and `_` which `classifyChars` rejects as "neither hex nor base64"),
+nor layer 6 (no field-name prefix in typical output).
+
+**Fix**: Added a dedicated regex in `src/layers/layer-1-vendor.ts`:
+`/\b[a-f0-9]{32}\.[A-Za-z0-9_-]{32,100}\b/g`. Pattern is strict enough
+to exclude UUIDs (which contain `-` in the prefix), version strings,
+short content hashes, and concatenated-without-dot prose. The signature
+range `32-100` covers both single HMAC-SHA256 keys (~43 chars) and the
+~88-char signature observed in the user's example.
+
+Filtered globally via the existing `tool_result` and `input` hooks —
+applies to ALL tool output (bash, ssh, read, grep, web_fetch, ...) and
+to user prompts, not just specific tools. Per the design in `src/index.ts`,
+only write-tools are excluded (those outputs are model-authored content,
+not user data).
+
+#### Changes
+- `src/layers/layer-1-vendor.ts` — `IONOS_API_TOKEN_RE` constant + dedicated
+  scan block alongside the Telegram one. Updated PATTERNS comment.
+- `test/ionos-token.test.mjs` — 18 new regression tests covering:
+  - User-provided key in prose / JSON / env-var prefix
+  - 88-char, 44-char, and minimum 32-char signatures
+  - Different public prefixes
+  - End-to-end through the `tool_result` hook for `bash` AND `ssh`
+    output (the user's primary concern about global coverage)
+  - 6 anti-false-positive cases (UUID, bare hex, split-without-dot,
+    sub-32-char signature, uppercase hex)
+
 ## [0.2.3] - 2026-10-12
 
 ### Fixed — User-Input filter was silently a no-op (TUI hang on install)
