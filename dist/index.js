@@ -1,12 +1,17 @@
 // pi-redact-all — Extension entry point
 // Hooks: tool_result (PostToolUse), tool_call (PreToolUse Block),
-//        before_agent_start (User-Input Filter)
+//        input (User-Input Filter, pre-expansion)
 import { loadConfig } from "./config.js";
 import { createSessionStats, recordMatches, recordBlock, formatStats } from "./stats.js";
 import { applyRedaction } from "./hooks/tool-result.js";
 import { shouldBlock, inputContainsSensitiveSecrets } from "./hooks/tool-call.js";
-import { filterUserPrompt } from "./hooks/user-input.js";
+import { transformInputText } from "./hooks/user-input.js";
 import { redactText } from "./layers/index.js";
+/** Count redactions in a string without building the replacement. Used for
+ *  /redact stats after the input hook has rewritten the prompt. */
+function redactTextForStats(text, ctx) {
+    return redactText(text, ctx).matches.length;
+}
 /** Default write-like tools — model output, never filtered or blocked */
 const WRITE_TOOLS = new Set(["write", "edit", "ssh_write", "ssh_edit", "multi_edit"]);
 function isWriteTool(name) {
@@ -88,16 +93,21 @@ export default function (pi) {
         return undefined;
     });
     // ──────────────────────────────────────────────────────────────
-    // USER-INPUT HOOK: Filter user prompt before agent loop starts
+    // INPUT HOOK: Filter user prompt before skill/template expansion.
+    //
+    // v0.2.3: Replaced the `before_agent_start` hook (which returned
+    // `{ prompt }` — a field the framework silently ignores) with the
+    // `input` event. The framework intercepts slash commands before this
+    // event fires, so registered commands like `/redact` are unaffected.
     // ──────────────────────────────────────────────────────────────
-    pi.on("before_agent_start", async (event) => {
+    pi.on("input", async (event) => {
         const e = event;
         const ctx = makeContext("user_input");
-        const result = filterUserPrompt(e, ctx);
-        if (result.prompt && result.prompt !== e.prompt) {
-            const scanResult = redactText(e.prompt, ctx);
-            if (scanResult.matches.length > 0) {
-                recordMatches(stats, scanResult.matches, "user_input");
+        const result = transformInputText(e.text, ctx);
+        if (result.action === "transform" && result.text !== undefined) {
+            const matchCount = redactTextForStats(e.text, ctx);
+            if (matchCount > 0) {
+                recordMatches(stats, Array(matchCount).fill({ start: 0, end: 0, type: "user_input", replacement: "" }), "user_input");
             }
         }
         return result;

@@ -5,7 +5,7 @@
 
 import { applyRedaction } from "../dist/hooks/tool-result.js";
 import { shouldBlock, inputContainsSensitiveSecrets } from "../dist/hooks/tool-call.js";
-import { filterUserPrompt } from "../dist/hooks/user-input.js";
+import { transformInputText } from "../dist/hooks/user-input.js";
 import { DEFAULT_CONFIG } from "../dist/config.js";
 
 const ctx = {
@@ -156,11 +156,10 @@ for (const tool of WRITE_TOOLS) {
   assert("tool_call: bash cat .ssh/id_rsa still blocked", result?.block === true);
 }
 
-// user_input still filtered
+// user_input still filtered (v0.2.3: input event hook)
 {
-  const event = { type: "before_agent_start", prompt: "What is ghp_FAKE-TOKEN-FOR-TESTING-ONLY-NOT-REAL-aaaaaaaaaaaa?" };
-  const result = filterUserPrompt(event, ctx);
-  assert("before_agent_start: user input still filtered", result.prompt?.includes("[REDACTED"));
+  const result = transformInputText("What is ghp_FAKE-TOKEN-FOR-TESTING-ONLY-NOT-REAL-aaaaaaaaaaaa?", ctx);
+  assert("input: user input still filtered", result.action === "transform" && result.text?.includes("[REDACTED"));
 }
 
 // ─────────────────────────────────────────────────────────────

@@ -4,7 +4,7 @@
 
 import { applyRedaction } from "../dist/hooks/tool-result.js";
 import { shouldBlock, inputContainsSensitiveSecrets } from "../dist/hooks/tool-call.js";
-import { filterUserPrompt } from "../dist/hooks/user-input.js";
+import { transformInputText } from "../dist/hooks/user-input.js";
 import { redactText } from "../dist/layers/index.js";
 import { DEFAULT_CONFIG } from "../dist/config.js";
 
@@ -187,24 +187,27 @@ function doesNotThrow(name, fn) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Section 3: before_agent_start hook
+// Section 3: input event hook (v0.2.3 — replaced before_agent_start)
 // ─────────────────────────────────────────────────────────────
 
 {
-  const event = {
-    type: "before_agent_start",
-    prompt: "What is ghp_FAKE-TOKEN-FOR-TESTING-ONLY-NOT-REAL-aaaaaaaaaaaa?",
-    images: [{ url: "https://example.com/img.png" }],
-  };
-  const result = filterUserPrompt(event, ctx);
-  assert("user_input: secret in prompt redacted", result.prompt?.includes("[REDACTED"));
-  assert("user_input: images preserved (not modified)", event.images?.[0]?.url === "https://example.com/img.png");
+  const text = "What is ghp_FAKE-TOKEN-FOR-TESTING-ONLY-NOT-REAL-aaaaaaaaaaaa?";
+  const result = transformInputText(text, ctx);
+  assert("user_input: secret in prompt redacted", result.action === "transform" && result.text?.includes("[REDACTED"));
 }
 
 {
-  const event = { type: "before_agent_start", prompt: "What is the weather today?", images: undefined };
-  const result = filterUserPrompt(event, ctx);
-  assert("user_input: no secrets = no change", result.prompt === undefined || result.prompt === event.prompt);
+  const text = "What is the weather today?";
+  const result = transformInputText(text, ctx);
+  assert("user_input: no secrets = no transform", result.action === "continue" && result.text === undefined);
+}
+
+{
+  // Slash commands must never be transformed (the framework intercepts them
+  // before the input event, but defend in depth).
+  const text = "/redact status";
+  const result = transformInputText(text, ctx);
+  assert("user_input: slash command passes through unchanged", result.action === "continue");
 }
 
 // ─────────────────────────────────────────────────────────────

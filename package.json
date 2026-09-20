@@ -1,6 +1,6 @@
 {
   "name": "pi-redact-all",
-  "version": "0.2.1",
+  "version": "0.2.3",
   "description": "Global tool-output redaction for Pi \u2014 redacts secrets, certificates, PII, and connection strings across all tools before they reach the model.",
   "keywords": [
     "pi",

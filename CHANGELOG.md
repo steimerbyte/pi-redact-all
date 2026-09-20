@@ -5,6 +5,52 @@ All notable changes to `pi-redact-all` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-10-12
+
+### Fixed — User-Input filter was silently a no-op (TUI hang on install)
+
+**Problem**: v0.2.0–v0.2.2 implemented the user-prompt redaction as a
+`before_agent_start` hook that returned `{ prompt: redactedText }`. The
+Pi framework's `BeforeAgentStartEventResult` type only accepts
+`{ message?, systemPrompt? }` — there is no `prompt` field. The framework
+silently dropped the redaction, so secrets typed into the prompt passed
+straight to the LLM. The hook also ran the full 9-layer regex pipeline on
+every keystroke without any effect, contributing to sluggish TUI
+responsiveness when installed.
+
+**Fix**: Switched to the `input` event, which fires before skill/template
+expansion and supports `action: "transform"` with a rewritten `text`.
+Redaction now actually happens, and slash commands like `/redact` are
+intercepted by the framework before the input event fires (plus we
+defend in depth with a `text.startsWith("/")` early-return).
+
+#### Changes
+- `src/hooks/user-input.ts` — replaced `filterUserPrompt(event, ctx)` with
+  `transformInputText(text, ctx)`. Returns `{ action: "transform", text }`
+  on match, `{ action: "continue" }` otherwise. Slash commands and short
+  text (< `minLength`) short-circuit.
+- `src/index.ts` — replaced `pi.on("before_agent_start", …)` with
+  `pi.on("input", …)`. Removed the redundant double `redactText` scan
+  (the old code scanned twice — once in `filterUserPrompt`, once for
+  stats). Stats now use a single scan via `redactTextForStats`.
+- `test/input-event-v0.2.3.test.mjs` — 20 new regression tests covering
+  basic redaction, no-secret pass-through, slash-command pass-through,
+  disabled / mode-off short-circuit, multiple secrets, empty / short text,
+  and a long config-dump regression.
+- `test/comprehensive-validation.mjs` — Section 3 rewritten to test
+  `transformInputText` instead of the obsolete `filterUserPrompt`.
+- `test/scoped-hooks-v0.2.0.test.mjs` — updated the user-input assertion
+  to use the new API.
+
+#### Why this fixes the TUI hang
+The old hook ran on every prompt submission and returned a value the
+framework ignored. Every keystroke triggered a no-op regex sweep over
+the prompt text. While the regex sweep itself is fast (~5ms for normal
+prompts), the hook ran unconditionally even for short inputs and short
+slash commands. The new hook short-circuits on `text.startsWith("/")`
+and on `text.length < minLength`, so common interactive inputs skip the
+9-layer pipeline entirely.
+
 ## [0.2.2] - 2026-08-31
 
 ### Fixed — Layer 6 dotted identifier references
