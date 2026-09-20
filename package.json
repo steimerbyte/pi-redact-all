@@ -1,6 +1,6 @@
 {
   "name": "pi-redact-all",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Global tool-output redaction for Pi \u2014 redacts secrets, certificates, PII, and connection strings across all tools before they reach the model.",
   "keywords": [
     "pi",
@@ -32,8 +32,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "prepare": "npm run build"
+    "test:watch": "vitest"
   },
   "pi": {
     "extensions": [

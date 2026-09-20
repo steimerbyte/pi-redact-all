@@ -5,6 +5,28 @@ All notable changes to `pi-redact-all` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.5] - 2026-09-20
+
+### Fixed — `npm install --omit=dev` crashed prepare script (Pi install broken)
+
+**Problem**: v0.2.4 declared `"prepare": "npm run build"` in `package.json`.
+Pi's git-source installer runs `npm install --omit=dev` against the cloned
+tag, which skips devDependencies (including `@types/node`) but still runs
+lifecycle scripts. `tsc -p tsconfig.build.json` then failed with
+`TS2591: Cannot find name 'node:fs'`, exiting with code 2, and the
+extension failed to install — Pi reported `Error: Reload failed: npm
+install --omit=dev failed with code 2`.
+
+**Fix**: Removed the `prepare` script. `dist/` is already tracked in git
+(see commit `419d926 fix: track dist/ in git + add omp field + prepare
+script`), so the compiled output ships with every tag and no in-place
+rebuild is required at install time. Contributors cloning the repo run
+`npm install && npm run build` as usual; downstream consumers just need
+the prebuilt `dist/`.
+
+#### Changes
+- `package.json` — dropped `"prepare": "npm run build"`, bumped to 0.2.5.
+
 ## [0.2.4] - 2026-10-12
 
 ### Added — IONOS API Token pattern (layer 1)
